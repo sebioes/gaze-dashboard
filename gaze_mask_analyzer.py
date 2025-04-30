@@ -4,24 +4,17 @@ import msgpack
 import os
 from tqdm import tqdm
 from dashboard_mask import detect_cockpit_dashboard
-from multiprocessing import Pool, cpu_count
-from functools import partial
 
 class GazeMaskAnalyzer:
-    def __init__(self, recording_dir, confidence_threshold=0.9, num_processes=None):
+    def __init__(self, recording_dir, confidence_threshold=0.9):
         """Initialize the GazeMaskAnalyzer with a recording directory.
         
         Args:
             recording_dir (str): Path to the recording directory
             confidence_threshold (float): Minimum confidence value (0-1) for a gaze point to be considered valid
-            num_processes (int): Number of processes to use for parallel processing. If None, uses all available cores.
         """
         self.recording_dir = recording_dir
         self.confidence_threshold = confidence_threshold
-        
-        # Set up multiprocessing
-        self.num_processes = num_processes if num_processes is not None else cpu_count()
-        print(f"Using {self.num_processes} processes for parallel processing")
         
         # Load timestamps
         self.world_timestamps = np.load(os.path.join(recording_dir, 'world_timestamps.npy'))
@@ -246,17 +239,25 @@ class GazeMaskAnalyzer:
             
         return composite
     
-    def process_frame_batch(self, frame_batch):
-        """Process a batch of frames in parallel.
+    def process_video(self, output_path):
+        """Process the video and create a visualization with gaze points and mask analysis."""
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, self.fps, (self.width, self.height))
         
-        Args:
-            frame_batch (list): List of tuples containing (frame_idx, frame)
-            
-        Returns:
-            list: Processed frames with gaze visualization
-        """
-        results = []
-        for frame_idx, frame in frame_batch:
+        pbar = tqdm(total=self.total_frames, desc="Processing frames")
+        frame_idx = 0
+        
+        while True:
+            ret, frame = self.cap.read()
+            if not ret:
+                print("Video capture ended")
+                break
+                
+            if frame_idx >= len(self.world_timestamps):
+                print(f"Reached end of timestamps at frame {frame_idx}")
+                break
+                
             frame_timestamp = self.world_timestamps[frame_idx]
             
             # Detect dashboard mask
@@ -288,67 +289,14 @@ class GazeMaskAnalyzer:
             
             # Draw visualization
             processed_frame = self.draw_gaze_and_status(frame, gaze_point, mask, is_in_mask)
-            results.append((frame_idx, processed_frame))
-            
-        return results
-
-    def process_video(self, output_path):
-        """Process the video and create a visualization with gaze points and mask analysis."""
-        # Create video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, self.fps, (self.width, self.height))
-        
-        # Create a pool of workers
-        pool = Pool(processes=self.num_processes)
-        
-        # Process frames in batches
-        batch_size = self.num_processes * 4  # Process 4 frames per worker
-        frame_batches = []
-        current_batch = []
-        
-        pbar = tqdm(total=self.total_frames, desc="Processing frames")
-        frame_idx = 0
-        
-        while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Video capture ended")
-                break
-                
-            if frame_idx >= len(self.world_timestamps):
-                print(f"Reached end of timestamps at frame {frame_idx}")
-                break
-                
-            current_batch.append((frame_idx, frame))
-            
-            if len(current_batch) >= batch_size:
-                frame_batches.append(current_batch)
-                current_batch = []
+            out.write(processed_frame)
             
             frame_idx += 1
             pbar.update(1)
             
-        # Add any remaining frames
-        if current_batch:
-            frame_batches.append(current_batch)
-            
         pbar.close()
-        
-        # Process all batches in parallel
-        processed_frames = []
-        for batch in frame_batches:
-            results = self.process_frame_batch(batch)
-            processed_frames.extend(results)
-            
-        # Sort frames by index and write to output
-        processed_frames.sort(key=lambda x: x[0])
-        for _, frame in processed_frames:
-            out.write(frame)
-            
         self.cap.release()
         out.release()
-        pool.close()
-        pool.join()
         
         # Print statistics
         if self.frames_with_gaze > 0:

@@ -1,0 +1,3 @@
+"""
+Gaze Dashboard package.
+"""

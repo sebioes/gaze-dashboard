@@ -1,0 +1,5 @@
+/data
+*.mp4
+*.pyc
+.python-version
+.DS_Store

@@ -292,7 +292,7 @@ class GazeMaskAnalyzer:
             fps=self.fps,
             codec="libx264",
             quality=8,
-            ffmpeg_params=["-preset", "ultrafast"],
+            ffmpeg_params=["-preset", "medium"],
         )
 
         pbar = tqdm(total=self.total_frames, desc="Processing frames")

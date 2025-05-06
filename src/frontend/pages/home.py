@@ -36,13 +36,12 @@ def gaze_analyzer_streaming_component(
     # Create frame selection sliders if not provided
     if start_frame is None or end_frame is None:
         with container:
-            col1, col2 = st.columns(2)
-            with col1:
-                start_frame = st.slider("Start Frame", 0, total_frames - 1, 0)
-            with col2:
-                end_frame = st.slider(
-                    "End Frame", 0, total_frames - 1, min(100, total_frames - 1)
-                )
+            start_frame, end_frame = st.slider(
+                "Select Frame Range",
+                0,
+                total_frames - 1,
+                (0, min(100, total_frames - 1)),
+            )
 
             if start_frame >= end_frame:
                 st.error("Start frame must be less than end frame")

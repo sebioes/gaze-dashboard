@@ -5,6 +5,7 @@ import os
 from tqdm import tqdm
 from pathlib import Path
 from src.video_processing.dashboard_mask import detect_cockpit_dashboard
+import imageio
 
 
 class GazeMaskAnalyzer:
@@ -285,75 +286,85 @@ class GazeMaskAnalyzer:
         # Ensure output directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # Create video writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(
-            str(output_path), fourcc, self.fps, (self.width, self.height)
+        # Create video writer using imageio
+        writer = imageio.get_writer(
+            str(output_path),
+            fps=self.fps,
+            codec="libx264",
+            quality=8,
+            ffmpeg_params=["-preset", "ultrafast"],
         )
 
         pbar = tqdm(total=self.total_frames, desc="Processing frames")
         frame_idx = 0
 
-        while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Video capture ended")
-                break
+        try:
+            while True:
+                ret, frame = self.cap.read()
+                if not ret:
+                    print("Video capture ended")
+                    break
 
-            if frame_idx >= len(self.world_timestamps):
-                print(f"Reached end of timestamps at frame {frame_idx}")
-                break
+                if frame_idx >= len(self.world_timestamps):
+                    print(f"Reached end of timestamps at frame {frame_idx}")
+                    break
 
-            frame_timestamp = self.world_timestamps[frame_idx]
+                frame_timestamp = self.world_timestamps[frame_idx]
 
-            # Detect dashboard mask
-            mask = detect_cockpit_dashboard(frame)
+                # Detect dashboard mask
+                mask = detect_cockpit_dashboard(frame)
 
-            # Find gaze point and check if it's in the mask
-            gaze_point = self.find_closest_gaze(frame_timestamp, frame_idx)
+                # Find gaze point and check if it's in the mask
+                gaze_point = self.find_closest_gaze(frame_timestamp, frame_idx)
 
-            # Update temporal smoothing
-            if (
-                gaze_point
-                and gaze_point.get("confidence", 0.0) >= self.confidence_threshold
-            ):
-                self.last_valid_gaze = gaze_point
-                self.last_valid_is_in_mask = self.is_gaze_in_mask(gaze_point, mask)
-                self.frames_since_last_gaze = 0
-            else:
-                self.frames_since_last_gaze += 1
+                # Update temporal smoothing
+                if (
+                    gaze_point
+                    and gaze_point.get("confidence", 0.0) >= self.confidence_threshold
+                ):
+                    self.last_valid_gaze = gaze_point
+                    self.last_valid_is_in_mask = self.is_gaze_in_mask(gaze_point, mask)
+                    self.frames_since_last_gaze = 0
+                else:
+                    self.frames_since_last_gaze += 1
 
-            # Use last valid gaze if within the keep window
-            if (
-                self.frames_since_last_gaze < self.max_frames_to_keep
-                and self.last_valid_gaze
-            ):
-                gaze_point = self.last_valid_gaze
-                is_in_mask = self.last_valid_is_in_mask
-            else:
-                is_in_mask = False
+                # Use last valid gaze if within the keep window
+                if (
+                    self.frames_since_last_gaze < self.max_frames_to_keep
+                    and self.last_valid_gaze
+                ):
+                    gaze_point = self.last_valid_gaze
+                    is_in_mask = self.last_valid_is_in_mask
+                else:
+                    is_in_mask = False
 
-            # Update statistics
-            if (
-                gaze_point
-                and gaze_point.get("confidence", 0.0) >= self.confidence_threshold
-            ):
-                self.frames_with_gaze += 1
-                if is_in_mask:
-                    self.frames_gaze_in_mask += 1
+                # Update statistics
+                if (
+                    gaze_point
+                    and gaze_point.get("confidence", 0.0) >= self.confidence_threshold
+                ):
+                    self.frames_with_gaze += 1
+                    if is_in_mask:
+                        self.frames_gaze_in_mask += 1
 
-            # Draw visualization
-            processed_frame = self.draw_gaze_and_status(
-                frame, gaze_point, mask, is_in_mask
-            )
-            out.write(processed_frame)
+                # Draw visualization
+                processed_frame = self.draw_gaze_and_status(
+                    frame, gaze_point, mask, is_in_mask
+                )
 
-            frame_idx += 1
-            pbar.update(1)
+                # Convert frame from BGR (OpenCV default) to RGB (imageio default)
+                frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
 
-        pbar.close()
-        self.cap.release()
-        out.release()
+                # Write frame using imageio
+                writer.append_data(frame_rgb)
+
+                frame_idx += 1
+                pbar.update(1)
+
+        finally:
+            pbar.close()
+            self.cap.release()
+            writer.close()
 
         # Prepare statistics
         stats = {

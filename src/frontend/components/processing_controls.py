@@ -5,8 +5,8 @@ Component for controlling video processing options.
 import streamlit as st
 from pathlib import Path
 import os
+from typing import Optional, Dict, Tuple
 from src.video_processing.gaze_mask_analyzer import analyze_recording
-from .video_player import VideoPlayer
 
 
 class ProcessingControls:
@@ -17,46 +17,46 @@ class ProcessingControls:
         if "processing_results" not in st.session_state:
             st.session_state.processing_results = None
 
-        # Initialize the video player
-        self.video_player = VideoPlayer()
-
-    def process_recording(self, recording_path):
-        """Process the selected recording"""
+    def process_recording(self, recording_path, confidence_threshold=0.9):
+        """Process the selected recording and store results in session state."""
         try:
             with st.spinner("Processing gaze data... This may take a while"):
-                output_path, stats = analyze_recording(recording_path)
+                output_path, stats = analyze_recording(
+                    recording_path, confidence_threshold=confidence_threshold
+                )
 
             st.session_state.processing_complete = True
             st.session_state.processing_results = {
                 "output_path": output_path,
                 "stats": stats,
             }
-
             return True
         except Exception as e:
             st.error(f"Error processing recording: {e}")
+            st.session_state.processing_complete = False
+            st.session_state.processing_results = None
             return False
 
-    def render(self, recording_path=None):
+    def render(self, recording_path=None) -> Optional[Tuple[str, Dict]]:
         """
-        Render the processing controls component.
+        Render the processing controls and return results if available.
 
         Args:
             recording_path (str or Path): Path to the recording directory to process
 
         Returns:
-            bool: True if processing was successful, False otherwise
+            Optional[Tuple[str, Dict]]: Path to the processed video and analysis stats, or None.
         """
         st.subheader("Processing Controls")
 
         if not recording_path:
             st.warning("Please select a recording to process.")
-            return False
+            return None
 
         recording_path = Path(recording_path)
         if not recording_path.exists():
             st.error(f"Recording directory does not exist: {recording_path}")
-            return False
+            return None
 
         # Check if the recording has already been processed
         recording_name = recording_path.name
@@ -86,32 +86,41 @@ class ProcessingControls:
 
         # Handle processing
         if process_clicked:
-            success = self.process_recording(recording_path)
-            return success
+            # Clear previous results before processing
+            st.session_state.processing_complete = False
+            st.session_state.processing_results = None
+            self.process_recording(recording_path, confidence_threshold=confidence)
+            # Rerun to update the state and display results
+            st.experimental_rerun()
 
         # Display results if processing is complete
         if st.session_state.processing_complete and st.session_state.processing_results:
-            self.display_results(st.session_state.processing_results)
-            return True
+            self.display_stats(st.session_state.processing_results["stats"])
+            return st.session_state.processing_results[
+                "output_path"
+            ], st.session_state.processing_results["stats"]
 
         # Display existing results if available
         if already_processed:
-            # Load basic stats
-            stats = {
-                "output_path": str(processed_path),
-            }
-            self.display_results({"output_path": str(processed_path), "stats": stats})
-            return True
+            # Load basic stats from previous run if possible (or just show path)
+            # Note: stats might not be available if app was restarted
+            stats = {}
+            self.display_stats(stats)  # Display empty stats for now
+            return str(processed_path), stats
 
-        return False
+        return None
 
-    def display_results(self, results):
-        """Display processing results"""
-        st.subheader("Analysis Results")
+    def display_stats(self, stats: Optional[Dict]):
+        """Display processing statistics only."""
+        st.subheader("Analysis Statistics")
 
-        # Display statistics if available
-        stats = results.get("stats")
-        if stats and "gaze_in_mask_percentage" in stats:
+        if not stats:
+            st.info(
+                "Statistics not available. Process the recording to view detailed stats."
+            )
+            return
+
+        if "gaze_in_mask_percentage" in stats:
             percentage = stats["gaze_in_mask_percentage"]
             st.metric("Gaze on Dashboard", f"{percentage:.2f}%")
 
@@ -121,13 +130,5 @@ class ProcessingControls:
                     st.metric("Valid Gaze Frames", stats["valid_gaze_frames"])
                 with col2:
                     st.metric("Gaze in Dashboard Frames", stats["gaze_in_mask_frames"])
-
-        # Display video using the video player component
-        output_path = results.get("output_path")
-        if output_path and os.path.exists(output_path):
-            # Use our improved VideoPlayer component
-            video_path = Path(output_path)
-            self.video_player.load_videos([video_path])
-            self.video_player.render()
         else:
-            st.warning("Processed video not found.")
+            st.info("Detailed statistics not available. Process the recording to view.")

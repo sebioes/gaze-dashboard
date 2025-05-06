@@ -4,144 +4,122 @@ Video player component for gaze recording videos.
 
 import streamlit as st
 import cv2
-import numpy as np
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-import time
+from typing import List, Optional
+import os
 
 
 class VideoPlayer:
     def __init__(self):
-        self.video_captures: Dict[str, cv2.VideoCapture] = {}
-        self.current_frame: Dict[str, np.ndarray] = {}
-        self.frame_counts: Dict[str, int] = {}
-        self.fps: Dict[str, float] = {}
-        self.current_frame_idx = 0
-        self.is_playing = False
-        self.last_update_time = 0
-        self.update_interval = 1 / 30  # 30 FPS
+        """Initialize the video player component"""
+        # Initialize state for video duration
+        if "video_durations" not in st.session_state:
+            st.session_state.video_durations = {}
 
-    def load_videos(self, video_paths: List[Path]):
-        """Load video files into the player"""
-        # Close any existing video captures
-        for cap in self.video_captures.values():
-            cap.release()
+    def load_videos(self, video_paths: List[Path]) -> bool:
+        """Load video files and get their durations
 
-        self.video_captures.clear()
-        self.current_frame.clear()
-        self.frame_counts.clear()
-        self.fps.clear()
+        Args:
+            video_paths: List of paths to video files
 
-        for video_path in video_paths:
-            if not video_path.exists():
-                st.error(f"Video file not found: {video_path}")
-                continue
-
-            cap = cv2.VideoCapture(str(video_path))
-            if not cap.isOpened():
-                st.error(f"Failed to open video: {video_path}")
-                continue
-
-            # Get video properties
-            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-
-            # Store video capture and properties
-            video_name = video_path.stem
-            self.video_captures[video_name] = cap
-            self.frame_counts[video_name] = frame_count
-            self.fps[video_name] = fps
-
-            # Read first frame
-            ret, frame = cap.read()
-            if ret:
-                self.current_frame[video_name] = frame
-
-        if not self.video_captures:
-            st.error("No valid videos loaded")
+        Returns:
+            bool: True if videos were loaded successfully
+        """
+        if not video_paths:
             return False
 
-        return True
+        # Store the video paths
+        self.video_paths = [str(path) for path in video_paths if path.exists()]
+
+        # Get video durations if not already cached
+        for video_path in self.video_paths:
+            if video_path not in st.session_state.video_durations:
+                self._get_video_duration(video_path)
+
+        return len(self.video_paths) > 0
+
+    def _get_video_duration(self, video_path: str) -> float:
+        """Get the duration of a video file in seconds"""
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                # Get the frame count and fps
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+
+                # Calculate duration in seconds
+                duration = frame_count / fps if fps > 0 else 0
+                st.session_state.video_durations[video_path] = duration
+                cap.release()
+                return duration
+            cap.release()
+        except Exception as e:
+            st.warning(f"Could not determine video duration: {e}")
+
+        # Default duration if we can't determine it
+        st.session_state.video_durations[video_path] = 120.0
+        return 120.0
 
     def render(self):
         """Render the video player UI"""
-        if not self.video_captures:
+        if not hasattr(self, "video_paths") or not self.video_paths:
             st.info("No videos loaded. Please upload videos first.")
             return
 
-        # Create columns for video display
-        num_videos = len(self.video_captures)
-        cols = st.columns(num_videos)
+        # Create tabs for each video
+        if len(self.video_paths) > 1:
+            # Multiple videos - use tabs
+            video_names = [Path(path).stem for path in self.video_paths]
+            tabs = st.tabs(video_names)
 
-        # Display videos
-        for (video_name, frame), col in zip(self.current_frame.items(), cols):
-            with col:
-                st.subheader(video_name)
-                st.image(frame, channels="BGR", use_column_width=True)
+            for i, (tab, video_path) in enumerate(zip(tabs, self.video_paths)):
+                with tab:
+                    self._render_single_video(video_path, f"video_{i}")
+        else:
+            # Single video - no tabs needed
+            self._render_single_video(self.video_paths[0], "video_0")
 
-        # Playback controls
-        col1, col2, col3 = st.columns([1, 2, 1])
-
-        with col1:
-            if st.button("⏮️ First"):
-                self.seek_to_frame(0)
-
-        with col2:
-            if st.button("⏯️ Play/Pause"):
-                self.is_playing = not self.is_playing
-
-        with col3:
-            if st.button("⏭️ Last"):
-                self.seek_to_frame(max(self.frame_counts.values()) - 1)
-
-        # Frame slider
-        max_frames = min(self.frame_counts.values())
-        frame_idx = st.slider(
-            "Frame", 0, max_frames - 1, self.current_frame_idx, key="frame_slider"
-        )
-
-        if frame_idx != self.current_frame_idx:
-            self.seek_to_frame(frame_idx)
-
-        # Playback speed
-        playback_speed = st.slider("Playback Speed", 0.25, 2.0, 1.0, 0.25)
-        self.update_interval = 1 / (30 * playback_speed)
-
-        # Update frames if playing
-        if self.is_playing:
-            current_time = time.time()
-            if current_time - self.last_update_time >= self.update_interval:
-                self.next_frame()
-                self.last_update_time = current_time
-                st.experimental_rerun()
-
-    def seek_to_frame(self, frame_idx: int):
-        """Seek to a specific frame in all videos"""
-        self.current_frame_idx = frame_idx
-
-        for video_name, cap in self.video_captures.items():
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if ret:
-                self.current_frame[video_name] = frame
-
-    def next_frame(self):
-        """Advance to the next frame in all videos"""
-        if self.current_frame_idx >= min(self.frame_counts.values()) - 1:
-            self.is_playing = False
+    def _render_single_video(self, video_path: str, key_prefix: str):
+        """Render a single video with timeline controls"""
+        if not os.path.exists(video_path):
+            st.error(f"Video file not found: {video_path}")
             return
 
-        self.current_frame_idx += 1
-        for video_name, cap in self.video_captures.items():
-            ret, frame = cap.read()
-            if ret:
-                self.current_frame[video_name] = frame
+        # Get video duration
+        duration = st.session_state.video_durations.get(video_path, 120.0)
 
-    def cleanup(self):
-        """Clean up video captures"""
-        for cap in self.video_captures.values():
-            cap.release()
-        self.video_captures.clear()
-        self.current_frame.clear()
-        self.frame_counts.clear()
-        self.fps.clear()
+        # Timeline controls
+        st.subheader("Timeline Controls")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            start_time = st.slider(
+                "Start Time (seconds)",
+                min_value=0.0,
+                max_value=max(0.1, duration - 0.1),
+                value=0.0,
+                step=1.0,
+                key=f"{key_prefix}_start",
+            )
+
+        with col2:
+            end_time = st.slider(
+                "End Time (seconds)",
+                min_value=0.1,
+                max_value=duration,
+                value=min(30.0, duration),
+                step=1.0,
+                key=f"{key_prefix}_end",
+            )
+
+        # Ensure end time is greater than start time
+        if end_time <= start_time:
+            end_time = start_time + 1.0
+            st.warning("End time must be greater than start time")
+
+        # Display the video with time range
+        st.video(video_path, start_time=start_time, end_time=end_time)
+
+        # Add option to play full video
+        if st.button("Play Full Video", key=f"{key_prefix}_full"):
+            st.video(video_path)

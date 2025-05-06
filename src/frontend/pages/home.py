@@ -21,27 +21,9 @@ def show():
     if selected_recording:
         recording_path = Path("data/raw") / selected_recording
 
-        # Create tabs for raw video and analysis
-        tab1, tab2 = st.tabs(["Raw Video", "Dashboard Analysis"])
+        # Process and analyze the recording
+        processor = ProcessingControls()
+        processor.render(recording_path)
 
-        with tab1:
-            # Display info about the recording
-            st.subheader(f"Recording: {selected_recording}")
-
-            # Find video files
-            video_files = list(recording_path.glob("*.mp4"))
-
-            if video_files:
-                # Initialize and display video player
-                player = VideoPlayer()
-                player.load_videos(video_files)
-                player.render()
-            else:
-                st.warning("No video files found in the selected recording.")
-
-        with tab2:
-            # Process and analyze the recording
-            processor = ProcessingControls()
-            processor.render(recording_path)
     else:
         st.info("Please select or upload a recording to get started.")

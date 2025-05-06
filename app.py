@@ -1,5 +1,5 @@
 import streamlit as st
-from src.frontend.pages import home, folder_upload
+from src.frontend.pages import home
 
 
 def main():
@@ -8,14 +8,6 @@ def main():
     )
 
     home.show()
-
-    # st.sidebar.title("Navigation")
-    # page = st.sidebar.radio("Go to", ["Home", "Folder Upload"])
-
-    # if page == "Home":
-    #     home.show()
-    # elif page == "Folder Upload":
-    #     folder_upload.show()
 
 
 if __name__ == "__main__":

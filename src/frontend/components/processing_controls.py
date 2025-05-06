@@ -6,6 +6,7 @@ import streamlit as st
 from pathlib import Path
 import os
 from src.video_processing.gaze_mask_analyzer import analyze_recording
+from .video_player import VideoPlayer
 
 
 class ProcessingControls:
@@ -15,6 +16,9 @@ class ProcessingControls:
             st.session_state.processing_complete = False
         if "processing_results" not in st.session_state:
             st.session_state.processing_results = None
+
+        # Initialize the video player
+        self.video_player = VideoPlayer()
 
     def process_recording(self, recording_path):
         """Process the selected recording"""
@@ -27,6 +31,7 @@ class ProcessingControls:
                 "output_path": output_path,
                 "stats": stats,
             }
+
             return True
         except Exception as e:
             st.error(f"Error processing recording: {e}")
@@ -117,9 +122,12 @@ class ProcessingControls:
                 with col2:
                     st.metric("Gaze in Dashboard Frames", stats["gaze_in_mask_frames"])
 
-        # Display video
+        # Display video using the video player component
         output_path = results.get("output_path")
         if output_path and os.path.exists(output_path):
-            st.video(output_path)
+            # Use our improved VideoPlayer component
+            video_path = Path(output_path)
+            self.video_player.load_videos([video_path])
+            self.video_player.render()
         else:
             st.warning("Processed video not found.")

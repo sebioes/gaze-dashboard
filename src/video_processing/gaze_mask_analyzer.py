@@ -6,23 +6,24 @@ from tqdm import tqdm
 from pathlib import Path
 from src.video_processing.dashboard_mask import detect_cockpit_dashboard
 import imageio
+from typing import Generator, Tuple, Dict, Optional, Any
 
 
 class GazeMaskAnalyzer:
-    def __init__(
-        self, recording_dir, confidence_threshold=0.9, output_dir="data/processed"
-    ):
+    def __init__(self, recording_dir, confidence_threshold=0.9, output_dir=None):
         """Initialize the GazeMaskAnalyzer with a recording directory.
 
         Args:
             recording_dir (str or Path): Path to the recording directory
             confidence_threshold (float): Minimum confidence value (0-1) for a gaze point to be considered valid
-            output_dir (str or Path): Directory where processed results should be saved
+            output_dir (str or Path, optional): Directory where processed results should be saved if needed
         """
         self.recording_dir = Path(recording_dir)
         self.confidence_threshold = confidence_threshold
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir = Path(output_dir) if output_dir is not None else None
+
+        if self.output_dir is not None:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Load timestamps
         self.world_timestamps = np.load(
@@ -267,39 +268,51 @@ class GazeMaskAnalyzer:
 
         return composite
 
-    def process_video(self, output_path=None):
-        """Process the video and create a visualization with gaze points and mask analysis.
+    def process_video_stream(
+        self, start_frame=None, end_frame=None, show_progress=True
+    ) -> Generator[Tuple[np.ndarray, Dict[str, Any]], None, Dict[str, Any]]:
+        """Process the video and yield frames as a stream with frame metadata.
 
         Args:
-            output_path (str or Path, optional): Path where the output file should be saved.
-                If None, will save to output_dir with the recording name.
+            start_frame (int, optional): Starting frame index. If None, starts from beginning.
+            end_frame (int, optional): Ending frame index. If None, processes until end.
+            show_progress (bool): Whether to show a progress bar
+
+        Yields:
+            tuple:
+                - np.ndarray: Processed frame in RGB format
+                - dict: Frame metadata including timestamp, gaze information, etc.
 
         Returns:
-            str: Path to the output file
-            dict: Statistics about the gaze analysis
+            dict: Final statistics about the gaze analysis when the generator completes
         """
-        # Determine output path if not provided
-        if output_path is None:
-            recording_name = self.recording_dir.name
-            output_path = self.output_dir / f"{recording_name}_analysis.mp4"
+        # Reset statistics in case we're reusing the analyzer
+        self.frames_with_gaze = 0
+        self.frames_gaze_in_mask = 0
 
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-        # Create video writer using imageio
-        writer = imageio.get_writer(
-            str(output_path),
-            fps=self.fps,
-            codec="libx264",
-            quality=8,
-            ffmpeg_params=["-preset", "medium"],
+        # Set up start and end frames
+        start_frame = 0 if start_frame is None else max(0, start_frame)
+        end_frame = (
+            self.total_frames
+            if end_frame is None
+            else min(self.total_frames, end_frame)
         )
 
-        pbar = tqdm(total=self.total_frames, desc="Processing frames")
-        frame_idx = 0
+        # Ensure we're at the right position in the video
+        if start_frame > 0:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        total_frames_to_process = end_frame - start_frame
+
+        # Set up progress bar if requested
+        pbar = None
+        if show_progress:
+            pbar = tqdm(total=total_frames_to_process, desc="Processing frames")
+
+        frame_idx = start_frame
 
         try:
-            while True:
+            while frame_idx < end_frame:
                 ret, frame = self.cap.read()
                 if not ret:
                     print("Video capture ended")
@@ -352,51 +365,118 @@ class GazeMaskAnalyzer:
                     frame, gaze_point, mask, is_in_mask
                 )
 
-                # Convert frame from BGR (OpenCV default) to RGB (imageio default)
+                # Convert frame from BGR (OpenCV default) to RGB
                 frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
 
-                # Write frame using imageio
-                writer.append_data(frame_rgb)
+                # Create frame metadata
+                metadata = {
+                    "frame_idx": frame_idx,
+                    "timestamp": frame_timestamp,
+                    "has_valid_gaze": gaze_point is not None
+                    and gaze_point.get("confidence", 0.0) >= self.confidence_threshold,
+                    "gaze_in_mask": is_in_mask if gaze_point else False,
+                    "confidence": gaze_point.get("confidence", 0.0)
+                    if gaze_point
+                    else 0.0,
+                }
+
+                # Yield the frame and metadata
+                yield frame_rgb, metadata
 
                 frame_idx += 1
-                pbar.update(1)
+                if pbar:
+                    pbar.update(1)
 
         finally:
-            pbar.close()
-            self.cap.release()
-            writer.close()
+            if pbar:
+                pbar.close()
 
-        # Prepare statistics
-        stats = {
-            "total_frames": frame_idx,
-            "valid_gaze_frames": self.frames_with_gaze,
-            "gaze_in_mask_frames": self.frames_gaze_in_mask,
-            "gaze_in_mask_percentage": 0,
-        }
-
-        # Print statistics
+        # Prepare final statistics
+        percentage = 0
         if self.frames_with_gaze > 0:
             percentage = (self.frames_gaze_in_mask / self.frames_with_gaze) * 100
-            stats["gaze_in_mask_percentage"] = percentage
 
+        stats = {
+            "total_frames_processed": frame_idx - start_frame,
+            "valid_gaze_frames": self.frames_with_gaze,
+            "gaze_in_mask_frames": self.frames_gaze_in_mask,
+            "gaze_in_mask_percentage": percentage,
+        }
+
+        return stats
+
+    def save_video_stream(self, output_path, start_frame=None, end_frame=None):
+        """Save a processed video stream to a file.
+
+        Args:
+            output_path (str or Path): Path where the output file should be saved
+            start_frame (int, optional): Starting frame index
+            end_frame (int, optional): Ending frame index
+
+        Returns:
+            tuple: (path to output file, statistics)
+        """
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        # Create video writer using imageio
+        writer = imageio.get_writer(
+            str(output_path),
+            fps=self.fps,
+            codec="libx264",
+            quality=8,
+            ffmpeg_params=["-preset", "medium"],
+        )
+
+        # Process and save frames
+        final_stats = None
+        frame_generator = self.process_video_stream(start_frame, end_frame)
+
+        try:
+            for frame, metadata in frame_generator:
+                writer.append_data(frame)
+        except StopIteration as e:
+            # Get the final stats when the generator completes
+            final_stats = e.value
+        finally:
+            writer.close()
+
+        # Print statistics
+        if final_stats:
             print(f"\nGaze Analysis Results:")
+            print(f"Total frames processed: {final_stats['total_frames_processed']}")
             print(
-                f"Total frames with high confidence gaze (>= {self.confidence_threshold}): {self.frames_with_gaze}"
+                f"Total frames with high confidence gaze (>= {self.confidence_threshold}): {final_stats['valid_gaze_frames']}"
             )
             print(
-                f"Frames with high confidence gaze in dashboard: {self.frames_gaze_in_mask}"
+                f"Frames with high confidence gaze in dashboard: {final_stats['gaze_in_mask_frames']}"
             )
-            print(f"Percentage of high confidence gaze in dashboard: {percentage:.2f}%")
-        else:
-            print("\nNo valid gaze points found in the video")
+            print(
+                f"Percentage of high confidence gaze in dashboard: {final_stats['gaze_in_mask_percentage']:.2f}%"
+            )
 
-        return str(output_path), stats
+        return str(output_path), final_stats
+
+
+def create_stream_analyzer(recording_dir, confidence_threshold=0.9) -> GazeMaskAnalyzer:
+    """Create a GazeMaskAnalyzer for streaming without writing to disk.
+
+    Args:
+        recording_dir (str or Path): Path to the recording directory
+        confidence_threshold (float): Minimum confidence value (0-1)
+
+    Returns:
+        GazeMaskAnalyzer: Analyzer instance that can process video frames as a stream
+    """
+    return GazeMaskAnalyzer(recording_dir, confidence_threshold)
 
 
 def analyze_recording(
     recording_dir, confidence_threshold=0.9, output_dir="data/processed"
 ):
     """Analyze a gaze recording and generate visualization.
+
+    This maintains the original API for backward compatibility.
 
     Args:
         recording_dir (str or Path): Path to the recording directory
@@ -408,14 +488,46 @@ def analyze_recording(
         dict: Statistics about the gaze analysis
     """
     analyzer = GazeMaskAnalyzer(recording_dir, confidence_threshold, output_dir)
-    output_path, stats = analyzer.process_video()
-    print(f"Analysis saved to {output_path}")
-    return output_path, stats
+    recording_name = Path(recording_dir).name
+    output_path = Path(output_dir) / f"{recording_name}_analysis.mp4"
+    return analyzer.save_video_stream(output_path)
 
 
+# Example of how to use the streaming functionality
 if __name__ == "__main__":
+    # Example 1: Process as a stream without saving
     recording_dir = "000"  # Default path for standalone testing
-    output_path, stats = analyze_recording(recording_dir)
-    print(
-        f"Analysis complete. Dashboard gaze percentage: {stats['gaze_in_mask_percentage']:.2f}%"
+    analyzer = create_stream_analyzer(recording_dir)
+
+    print("Processing video stream...")
+
+    # Example of processing a specific range (e.g., first 100 frames)
+    stats = None
+    frame_count = 0
+
+    # Process only frames 50-150
+    for frame, metadata in analyzer.process_video_stream(start_frame=50, end_frame=150):
+        # Here you can do real-time processing with each frame
+        frame_count += 1
+        print(
+            f"Processing frame {metadata['frame_idx']}, timestamp: {metadata['timestamp']:.3f}"
+        )
+
+        # In a real application, you might:
+        # 1. Display the frame in a window
+        # cv2.imshow("Stream", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        # cv2.waitKey(1)
+
+        # 2. Send it over a network
+        # stream.send(frame)
+
+        # 3. Process it further
+        # results = some_processing_function(frame)
+
+    # Example 2: Save a specific segment to disk
+    output_path, stats = analyzer.save_video_stream(
+        "output_segment.mp4", start_frame=200, end_frame=300
     )
+
+    print(f"Analysis saved to {output_path}")
+    print(f"Dashboard gaze percentage: {stats['gaze_in_mask_percentage']:.2f}%")

@@ -27,6 +27,9 @@ class GazeRecordingSelector:
         if "last_uploaded_path" not in st.session_state:
             st.session_state.last_uploaded_path = None
 
+        if "pending_overwrite" not in st.session_state:
+            st.session_state.pending_overwrite = None
+
     def get_available_recordings(self) -> List[str]:
         """Get list of available recordings in the data directory"""
         try:
@@ -121,6 +124,8 @@ class GazeRecordingSelector:
                         st.session_state.upload_complete = True
                         # Hide the form (will take effect on next rerun)
                         st.session_state.show_upload_form = False
+                        # Trigger immediate rerun to update UI
+                        st.rerun()
 
         # Check if we just completed an upload
         if st.session_state.upload_complete and st.session_state.last_uploaded_path:
@@ -155,16 +160,42 @@ class GazeRecordingSelector:
 
         target_path = self.data_dir / target_dir_name
 
-        # Check if target directory already exists
-        if target_path.exists():
-            st.warning(f"A recording with the name {target_dir_name} already exists.")
-            overwrite = st.checkbox("Overwrite existing recording?")
-            if overwrite:
+        # Check if we have a pending overwrite for this target path
+        if st.session_state.pending_overwrite == str(target_path):
+            # User confirmed overwrite in previous run, proceed with deletion and copy
+            st.session_state.pending_overwrite = None  # Clear the pending flag
+            with st.spinner(f"Removing existing recording at {target_path}..."):
                 shutil.rmtree(target_path)
-            else:
-                return None
+            # Continue to copying phase
+        # Check if target directory already exists and no pending overwrite
+        elif target_path.exists():
+            st.warning(f"A recording with the name {target_dir_name} already exists.")
+            col1, col2 = st.columns(2)
 
-        # Copy the folder with simple progress indicator
+            # Define callback to set the pending overwrite flag
+            def confirm_overwrite():
+                st.session_state.pending_overwrite = str(target_path)
+
+            with col1:
+                st.button(
+                    "Overwrite",
+                    key=f"overwrite_{target_dir_name}",
+                    on_click=confirm_overwrite,
+                )
+            with col2:
+                # Cancel button - just clears the pending overwrite if set
+                def cancel_overwrite():
+                    st.session_state.pending_overwrite = None
+                    st.info("Upload cancelled.")
+
+                st.button(
+                    "Cancel", key=f"cancel_{target_dir_name}", on_click=cancel_overwrite
+                )
+
+            # Return None to wait for user decision
+            return None
+
+        # If the path didn't exist, or if overwrite was confirmed and deletion succeeded, proceed to copy
         with st.spinner(f"Copying files from {source_path} to {target_path}..."):
             try:
                 shutil.copytree(source_path, target_path)

@@ -1,18 +1,17 @@
 """
-Reusable Streamlit components package.
+Frontend components for the Gaze Dashboard application.
 """
 
-from .video_player import VideoPlayer
-
-# from .processing_controls import ProcessingControls
 from .recording_selector import GazeRecordingSelector
+from .video_player import VideoPlayer
 from .processing_controls import ProcessingControls
-from .realtime_gaze_player import RealTimeGazeMaskAnalyzer, gaze_analyzer_component
+from .gaze_analyzer_streaming import GazeAnalyzerStreaming
+from .save_segment import SaveSegment
 
 __all__ = [
-    "VideoPlayer",
     "GazeRecordingSelector",
+    "VideoPlayer",
     "ProcessingControls",
-    "RealTimeGazeMaskAnalyzer",
-    "gaze_analyzer_component",
+    "GazeAnalyzerStreaming",
+    "SaveSegment",
 ]

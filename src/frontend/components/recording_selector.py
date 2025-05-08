@@ -145,7 +145,12 @@ class GazeRecordingSelector:
             return None
 
         # Check if essential files exist
-        essential_files = ["world.mp4", "gaze.pldata"]
+        essential_files = [
+            "world.mp4",
+            "gaze.pldata",
+            "world_timestamps.npy",
+            "gaze_timestamps.npy",
+        ]
         missing_files = [f for f in essential_files if not (source_path / f).exists()]
 
         if missing_files:
@@ -165,7 +170,8 @@ class GazeRecordingSelector:
             # User confirmed overwrite in previous run, proceed with deletion and copy
             st.session_state.pending_overwrite = None  # Clear the pending flag
             with st.spinner(f"Removing existing recording at {target_path}..."):
-                shutil.rmtree(target_path)
+                if target_path.exists():
+                    shutil.rmtree(target_path)
             # Continue to copying phase
         # Check if target directory already exists and no pending overwrite
         elif target_path.exists():
@@ -196,11 +202,19 @@ class GazeRecordingSelector:
             return None
 
         # If the path didn't exist, or if overwrite was confirmed and deletion succeeded, proceed to copy
-        with st.spinner(f"Copying files from {source_path} to {target_path}..."):
+        with st.spinner(
+            f"Copying essential files from {source_path} to {target_path}..."
+        ):
             try:
-                shutil.copytree(source_path, target_path)
-                st.success(f"Successfully copied recording to {target_path}")
+                # Create target directory
+                target_path.mkdir(parents=True, exist_ok=True)
+
+                # Copy only the essential files
+                for file in essential_files:
+                    shutil.copy2(source_path / file, target_path / file)
+
+                st.success(f"Successfully copied essential files to {target_path}")
                 return target_path
             except Exception as e:
-                st.error(f"Error copying folder: {e}")
+                st.error(f"Error copying files: {e}")
                 return None

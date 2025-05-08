@@ -4,7 +4,6 @@ Component for controlling video processing options.
 
 import streamlit as st
 from pathlib import Path
-import os
 from typing import Optional, Dict, Tuple
 from src.video_processing.gaze_mask_analyzer import analyze_recording
 

@@ -6,7 +6,7 @@ from tqdm import tqdm
 from pathlib import Path
 from src.video_processing.dashboard_mask import detect_cockpit_dashboard
 import imageio
-from typing import Generator, Tuple, Dict, Optional, Any
+from typing import Generator, Tuple, Dict, Optional, Any, List
 
 
 class GazeMaskAnalyzer:
@@ -33,13 +33,13 @@ class GazeMaskAnalyzer:
             os.path.join(self.recording_dir, "gaze_timestamps.npy")
         )
 
-        # Print timestamp ranges for verification
-        print(
-            f"World timestamps range: {self.world_timestamps[0]:.3f} to {self.world_timestamps[-1]:.3f}"
-        )
-        print(
-            f"Gaze timestamps range: {self.gaze_timestamps[0]:.3f} to {self.gaze_timestamps[-1]:.3f}"
-        )
+        # Testing stuff
+        # print(
+        #     f"World timestamps range: {self.world_timestamps[0]:.3f} to {self.world_timestamps[-1]:.3f}"
+        # )
+        # print(
+        #     f"Gaze timestamps range: {self.gaze_timestamps[0]:.3f} to {self.gaze_timestamps[-1]:.3f}"
+        # )
 
         # Open video capture
         self.video_path = os.path.join(self.recording_dir, "world.mp4")
@@ -119,7 +119,7 @@ class GazeMaskAnalyzer:
 
         return gaze_data
 
-    def find_closest_gaze(self, frame_timestamp, frame_idx):
+    def find_closest_gaze(self, frame_timestamp):
         """Find the closest gaze point to the current frame timestamp."""
         if len(self.gaze_data) == 0 or len(self.gaze_timestamps) == 0:
             return None
@@ -268,9 +268,70 @@ class GazeMaskAnalyzer:
 
         return composite
 
+    def get_current_stats(self) -> Dict[str, Any]:
+        """Get the current statistics about the gaze analysis.
+
+        Returns:
+            dict: Current statistics including frames processed, valid gaze frames,
+                  frames with gaze in mask, and percentage.
+        """
+        percentage = 0
+        if self.frames_with_gaze > 0:
+            percentage = (self.frames_gaze_in_mask / self.frames_with_gaze) * 100
+
+        return {
+            "valid_gaze_frames": self.frames_with_gaze,
+            "gaze_in_mask_frames": self.frames_gaze_in_mask,
+            "gaze_in_mask_percentage": percentage,
+        }
+
+    def compute_metadata_for_frame_sequence(
+        self, start_frame: int, end_frame: int
+    ) -> List[Dict[str, Any]]:
+        """Compute metadata for a sequence of frames from start_frame to end_frame.
+
+        Args:
+            start_frame (int): The starting frame index.
+            end_frame (int): The ending frame index.
+
+        Returns:
+            list: List of frame metadata dictionaries.
+        """
+        original_start_frame = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        metadata_sequence = []
+
+        for frame_idx in range(start_frame, end_frame):
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+
+            frame_timestamp = self.world_timestamps[frame_idx]
+            mask = detect_cockpit_dashboard(frame)
+            gaze_point = self.find_closest_gaze(frame_timestamp)
+
+            metadata = {
+                "frame_idx": frame_idx,
+                "timestamp": frame_timestamp,
+                "has_valid_gaze": gaze_point is not None
+                and gaze_point.get("confidence", 0.0) >= self.confidence_threshold,
+                "gaze_in_mask": self.is_gaze_in_mask(gaze_point, mask)
+                if gaze_point
+                else False,
+                "confidence": gaze_point.get("confidence", 0.0) if gaze_point else 0.0,
+            }
+
+            metadata_sequence.append(metadata)
+
+        # Restore the original frame position
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, original_start_frame)
+
+        return metadata_sequence
+
     def process_video_stream(
         self, start_frame=None, end_frame=None, show_progress=True
-    ) -> Generator[Tuple[np.ndarray, Dict[str, Any]], None, Dict[str, Any]]:
+    ) -> Generator[Tuple[np.ndarray, Dict[str, Any]], None, None]:
         """Process the video and yield frames as a stream with frame metadata.
 
         Args:
@@ -282,13 +343,13 @@ class GazeMaskAnalyzer:
             tuple:
                 - np.ndarray: Processed frame in RGB format
                 - dict: Frame metadata including timestamp, gaze information, etc.
-
-        Returns:
-            dict: Final statistics about the gaze analysis when the generator completes
         """
         # Reset statistics in case we're reusing the analyzer
         self.frames_with_gaze = 0
         self.frames_gaze_in_mask = 0
+        total_frames_to_process = (
+            end_frame - start_frame if end_frame and start_frame else self.total_frames
+        )
 
         # Set up start and end frames
         start_frame = 0 if start_frame is None else max(0, start_frame)
@@ -301,8 +362,6 @@ class GazeMaskAnalyzer:
         # Ensure we're at the right position in the video
         if start_frame > 0:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
-        total_frames_to_process = end_frame - start_frame
 
         # Set up progress bar if requested
         pbar = None
@@ -328,7 +387,7 @@ class GazeMaskAnalyzer:
                 mask = detect_cockpit_dashboard(frame)
 
                 # Find gaze point and check if it's in the mask
-                gaze_point = self.find_closest_gaze(frame_timestamp, frame_idx)
+                gaze_point = self.find_closest_gaze(frame_timestamp)
 
                 # Update temporal smoothing
                 if (
@@ -391,20 +450,6 @@ class GazeMaskAnalyzer:
             if pbar:
                 pbar.close()
 
-        # Prepare final statistics
-        percentage = 0
-        if self.frames_with_gaze > 0:
-            percentage = (self.frames_gaze_in_mask / self.frames_with_gaze) * 100
-
-        stats = {
-            "total_frames_processed": frame_idx - start_frame,
-            "valid_gaze_frames": self.frames_with_gaze,
-            "gaze_in_mask_frames": self.frames_gaze_in_mask,
-            "gaze_in_mask_percentage": percentage,
-        }
-
-        return stats
-
     def save_video_stream(self, output_path, start_frame=None, end_frame=None):
         """Save a processed video stream to a file.
 
@@ -429,33 +474,34 @@ class GazeMaskAnalyzer:
         )
 
         # Process and save frames
-        final_stats = None
         frame_generator = self.process_video_stream(start_frame, end_frame)
 
         try:
             for frame, metadata in frame_generator:
                 writer.append_data(frame)
-        except StopIteration as e:
-            # Get the final stats when the generator completes
-            final_stats = e.value
         finally:
             writer.close()
 
-        # Print statistics
-        if final_stats:
-            print(f"\nGaze Analysis Results:")
-            print(f"Total frames processed: {final_stats['total_frames_processed']}")
-            print(
-                f"Total frames with high confidence gaze (>= {self.confidence_threshold}): {final_stats['valid_gaze_frames']}"
-            )
-            print(
-                f"Frames with high confidence gaze in dashboard: {final_stats['gaze_in_mask_frames']}"
-            )
-            print(
-                f"Percentage of high confidence gaze in dashboard: {final_stats['gaze_in_mask_percentage']:.2f}%"
-            )
+        # Get final statistics
+        stats = self.get_current_stats()
+        stats["total_frames_processed"] = (
+            end_frame - start_frame if end_frame and start_frame else self.total_frames
+        )
 
-        return str(output_path), final_stats
+        # Print statistics
+        print(f"\nGaze Analysis Results:")
+        print(f"Total frames processed: {stats['total_frames_processed']}")
+        print(
+            f"Total frames with high confidence gaze (>= {self.confidence_threshold}): {stats['valid_gaze_frames']}"
+        )
+        print(
+            f"Frames with high confidence gaze in dashboard: {stats['gaze_in_mask_frames']}"
+        )
+        print(
+            f"Percentage of high confidence gaze in dashboard: {stats['gaze_in_mask_percentage']:.2f}%"
+        )
+
+        return str(output_path), stats
 
 
 def create_stream_analyzer(recording_dir, confidence_threshold=0.9) -> GazeMaskAnalyzer:
@@ -512,17 +558,6 @@ if __name__ == "__main__":
         print(
             f"Processing frame {metadata['frame_idx']}, timestamp: {metadata['timestamp']:.3f}"
         )
-
-        # In a real application, you might:
-        # 1. Display the frame in a window
-        # cv2.imshow("Stream", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        # cv2.waitKey(1)
-
-        # 2. Send it over a network
-        # stream.send(frame)
-
-        # 3. Process it further
-        # results = some_processing_function(frame)
 
     # Example 2: Save a specific segment to disk
     output_path, stats = analyzer.save_video_stream(

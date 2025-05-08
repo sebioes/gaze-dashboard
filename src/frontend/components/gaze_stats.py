@@ -14,37 +14,31 @@ class GazeStats:
                 "confidence_values": [],
             }
 
-    def compute_sequence_stats(self, metadata_sequence):
-        """Compute statistics for an entire sequence of frames.
+    def update_stats(self, metadata):
+        """Update statistics based on new frame metadata.
 
         Args:
-            metadata_sequence (list): List of frame metadata dictionaries from GazeMaskAnalyzer
+            metadata (dict): Frame metadata from GazeMaskAnalyzer
         """
-        stats = {
-            "total_frames": len(metadata_sequence),
-            "valid_gaze_frames": 0,
-            "gaze_in_mask_frames": 0,
-            "gaze_in_mask_percentage": 0.0,
-            "confidence_values": [],
-        }
+        stats = st.session_state.gaze_stats
 
-        # Process all frames in the sequence
-        for metadata in metadata_sequence:
-            if metadata["has_valid_gaze"]:
-                stats["valid_gaze_frames"] += 1
-                stats["confidence_values"].append(metadata["confidence"])
+        # Update total frames
+        stats["total_frames"] += 1
 
-                if metadata["gaze_in_mask"]:
-                    stats["gaze_in_mask_frames"] += 1
+        # Update valid gaze frames
+        if metadata["has_valid_gaze"]:
+            stats["valid_gaze_frames"] += 1
+            stats["confidence_values"].append(metadata["confidence"])
+
+            # Update gaze in mask frames
+            if metadata["gaze_in_mask"]:
+                stats["gaze_in_mask_frames"] += 1
 
         # Calculate percentage
         if stats["valid_gaze_frames"] > 0:
             stats["gaze_in_mask_percentage"] = (
                 stats["gaze_in_mask_frames"] / stats["valid_gaze_frames"]
             ) * 100
-
-        # Update session state
-        st.session_state.gaze_stats = stats
 
     def render(self):
         """Render the statistics display."""

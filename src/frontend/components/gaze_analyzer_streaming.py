@@ -9,6 +9,10 @@ from src.frontend.components.gaze_stats import GazeStats
 
 
 class GazeAnalyzerStreaming:
+    def __init__(self):
+        """Initialize the streaming analyzer component."""
+        self.gaze_stats = GazeStats()
+
     def render(self, container, recording_dir, start_frame=None, end_frame=None):
         """Real-time gaze analyzer component that uses the streaming API.
 
@@ -32,41 +36,43 @@ class GazeAnalyzerStreaming:
             start_frame, end_frame = render_start_stop_frame_slider(total_frames)
             progress_bar = st.progress(0)
             stop_button = st.button("Stop Processing")
-            metadata_sequence = analyzer.compute_metadata_for_frame_sequence(
-                start_frame, end_frame
+
+        with col2:
+            stats_placeholder = st.empty()
+
+        try:
+            # Process video frames
+            frame_generator = analyzer.process_video_stream(
+                start_frame=start_frame, end_frame=end_frame, show_progress=False
             )
 
-            try:
-                # Process video frames
-                frame_generator = analyzer.process_video_stream(
-                    start_frame=start_frame, end_frame=end_frame, show_progress=False
+            for i, (frame, metadata) in enumerate(frame_generator):
+                if stop_button:
+                    container.warning("Processing stopped by user")
+                    break
+
+                # Update progress
+                progress = (metadata["frame_idx"] - start_frame) / (
+                    end_frame - start_frame
+                )
+                progress_bar.progress(min(1.0, progress))
+
+                # Display current frame
+                video_placeholder.image(
+                    frame,
+                    use_container_width=True,
                 )
 
-                for i, (frame, metadata) in enumerate(frame_generator):
-                    if stop_button:
-                        container.warning("Processing stopped by user")
-                        break
+                # Update stats and force rerender
+                self.gaze_stats.update_stats(metadata)
+                with stats_placeholder.container():
+                    self.gaze_stats.render()
 
-                    # Update progress
-                    progress = (metadata["frame_idx"] - start_frame) / (
-                        end_frame - start_frame
-                    )
-                    progress_bar.progress(min(1.0, progress))
+                # Maintain target FPS
+                time.sleep(frame_delay)
 
-                    # Display current frame
-                    video_placeholder.image(
-                        frame,
-                        use_container_width=True,
-                    )
-                    # Maintain target FPS
-                    time.sleep(frame_delay)
-
-            except Exception as e:
-                container.error(f"Error processing video: {e}")
-        with col2:
-            gaze_stats = GazeStats()
-            gaze_stats.compute_sequence_stats(metadata_sequence)
-            gaze_stats.render()
+        except Exception as e:
+            container.error(f"Error processing video: {e}")
 
 
 def render_start_stop_frame_slider(total_frames):

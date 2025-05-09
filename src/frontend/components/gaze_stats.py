@@ -12,6 +12,7 @@ class GazeStats:
                 "gaze_in_mask_frames": 0,
                 "gaze_in_mask_percentage": 0.0,
                 "confidence_values": [],
+                "gaze_metadata": [],  # Initialize the metadata list
             }
 
     def update_stats(self, metadata):
@@ -40,6 +41,9 @@ class GazeStats:
                 stats["gaze_in_mask_frames"] / stats["valid_gaze_frames"]
             ) * 100
 
+        # Store metadata for time series
+        stats["gaze_metadata"].append(metadata)
+
     def reset_stats(self):
         """Reset the statistics."""
         st.session_state.gaze_stats = {
@@ -48,6 +52,7 @@ class GazeStats:
             "gaze_in_mask_frames": 0,
             "gaze_in_mask_percentage": 0.0,
             "confidence_values": [],
+            "gaze_metadata": [],  # Reset the metadata list
         }
 
     def render(self):
@@ -61,6 +66,19 @@ class GazeStats:
             f"{stats['gaze_in_mask_percentage']:.1f}%",
             help="Percentage of valid gaze points that fall within the instrument panel",
         )
+
+        # Time series visualization updated based on each frame. 1 if gaze is on instrument, 0 if not.
+        if stats["gaze_metadata"]:
+            time_series = [
+                1 if metadata["gaze_in_mask"] else 0
+                for metadata in stats["gaze_metadata"]
+            ]
+            st.markdown("#### Gaze Timeline")
+            st.line_chart(time_series, height=200)
+            st.caption("1 = Gaze on instruments, 0 = Gaze elsewhere")
+        else:
+            st.warning("No gaze metadata available to render time series.")
+
         # Secondary information in an expander
         with st.expander("Processing Metrics"):
             st.markdown("#### Frame Analysis")

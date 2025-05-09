@@ -34,11 +34,13 @@ class GazeAnalyzerStreaming:
         with col1:
             video_placeholder = st.empty()
             start_frame, end_frame = render_start_stop_frame_slider(total_frames)
-            progress_bar = st.progress(0)
-            stop_button = st.button("Stop Processing")
+            # progress_bar = st.progress(0)
+            # stop_button = st.button("Stop Processing")
 
         with col2:
             stats_placeholder = st.empty()
+
+        self.gaze_stats.reset_stats()
 
         try:
             # Process video frames
@@ -47,15 +49,15 @@ class GazeAnalyzerStreaming:
             )
 
             for i, (frame, metadata) in enumerate(frame_generator):
-                if stop_button:
-                    container.warning("Processing stopped by user")
-                    break
+                # if stop_button:
+                #     container.warning("Processing stopped by user")
+                #     break
 
-                # Update progress
-                progress = (metadata["frame_idx"] - start_frame) / (
-                    end_frame - start_frame
-                )
-                progress_bar.progress(min(1.0, progress))
+                # # Update progress
+                # progress = (metadata["frame_idx"] - start_frame) / (
+                #     end_frame - start_frame
+                # )
+                # progress_bar.progress(min(1.0, progress))
 
                 # Display current frame
                 video_placeholder.image(
@@ -65,8 +67,11 @@ class GazeAnalyzerStreaming:
 
                 # Update stats and force rerender
                 self.gaze_stats.update_stats(metadata)
-                with stats_placeholder.container():
-                    self.gaze_stats.render()
+
+                # Force rerender every 30 frames
+                if i % 30 == 0:
+                    with stats_placeholder.container():
+                        self.gaze_stats.render()
 
                 # Maintain target FPS
                 time.sleep(frame_delay)

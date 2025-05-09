@@ -55,7 +55,7 @@ class GazeRecordingSelector:
             Tuple of (selected_recording_name, was_new_upload)
         """
         # Both controls on the same row with same height
-        col1, col2 = st.columns([4, 1])
+        col1, col2 = st.columns([2, 1])
 
         with col1:
             recordings = self.get_available_recordings()
@@ -76,7 +76,7 @@ class GazeRecordingSelector:
                 unsafe_allow_html=True,
             )
             st.button(
-                "Upload New",
+                "Upload",
                 use_container_width=True,
                 key="upload_btn",
                 on_click=self._toggle_upload_form,

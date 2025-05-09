@@ -40,30 +40,29 @@ class GazeStats:
                 stats["gaze_in_mask_frames"] / stats["valid_gaze_frames"]
             ) * 100
 
+    def reset_stats(self):
+        """Reset the statistics."""
+        st.session_state.gaze_stats = {
+            "total_frames": 0,
+            "valid_gaze_frames": 0,
+            "gaze_in_mask_frames": 0,
+            "gaze_in_mask_percentage": 0.0,
+            "confidence_values": [],
+        }
+
     def render(self):
         """Render the statistics display."""
         stats = st.session_state.gaze_stats
 
-        st.markdown("### Gaze Analysis Results")
+        st.markdown("#### Gaze Analysis")
 
-        # Primary focus: Gaze in Mask statistics
-        st.markdown("#### Primary Metrics")
-        main_col1, main_col2 = st.columns(2)
-        with main_col1:
-            st.metric(
-                "Eyes on Instruments Panel Percentage",
-                f"{stats['gaze_in_mask_percentage']:.1f}%",
-                help="Percentage of valid gaze points that fall within the instrument panel",
-            )
-        with main_col2:
-            st.metric(
-                "Gaze in Mask Frames",
-                stats["gaze_in_mask_frames"],
-                help="Number of frames where gaze was detected within the target mask",
-            )
-
+        st.metric(
+            "Eyes on Instruments Panel",
+            f"{stats['gaze_in_mask_percentage']:.1f}%",
+            help="Percentage of valid gaze points that fall within the instrument panel",
+        )
         # Secondary information in an expander
-        with st.expander("Additional Metrics"):
+        with st.expander("Processing Metrics"):
             st.markdown("#### Frame Analysis")
             frame_col1, frame_col2 = st.columns(2)
             with frame_col1:
@@ -93,5 +92,7 @@ class GazeStats:
                     st.metric("Max Confidence", f"{np.max(conf_values):.2f}")
 
                 # Display confidence distribution
-                st.markdown("#### Confidence Distribution")
-                st.bar_chart(conf_values)
+                # st.markdown("#### Confidence Distribution")
+                # min_conf = np.min(conf_values)
+                # adjusted_conf_values = conf_values - min_conf
+                # st.bar_chart(adjusted_conf_values, height=200)
